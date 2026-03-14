@@ -16,7 +16,7 @@ const app = initializeApp(firebaseConfig)
 const db = getFirestore(app)
 
 
-// 1️⃣ 이미 오늘 뉴스가 있는지 확인
+// 오늘 뉴스 존재 확인
 const todayDoc = await getDoc(doc(db,"daily_news",today))
 
 if(todayDoc.exists()){
@@ -27,7 +27,7 @@ if(todayDoc.exists()){
 }
 
 
-// 2️⃣ 뉴스 API 호출
+// 뉴스 API 호출
 const news = await fetch(
 `https://newsapi.org/v2/everything?q=aluminum OR scrap OR iron ore OR copper OR mining&language=en&pageSize=10&sortBy=publishedAt&apiKey=YOUR_NEWS_API_KEY`
 )
@@ -39,7 +39,7 @@ if(!newsData.articles){
 }
 
 
-// 3️⃣ 원자재 가격 데이터 수집
+// 가격 데이터 수집
 const price = await fetch(
 "https://query1.finance.yahoo.com/v7/finance/quote?symbols=ALI=F,HG=F,TIO=F,SLX"
 )
@@ -62,12 +62,46 @@ market.find(m=>m.symbol==="SLX")?.regularMarketPrice || null
 
 
 
-// 4️⃣ 뉴스 중요도 필터
+// 어제 가격 조회
+const yesterdayDate = new Date(Date.now() - 86400000)
+  .toISOString()
+  .slice(0,10)
+
+const yesterdayDoc = await getDoc(doc(db,"daily_news",yesterdayDate))
+
+let change = {}
+
+if(yesterdayDoc.exists()){
+
+ const y = yesterdayDoc.data().prices
+
+ change = {
+
+ aluminum:
+ ((aluminum - y.aluminum) / y.aluminum * 100).toFixed(2),
+
+ copper:
+ ((copper - y.copper) / y.copper * 100).toFixed(2),
+
+ ironOre:
+ ((ironOre - y.ironOre) / y.ironOre * 100).toFixed(2),
+
+ scrap:
+ ((scrap - y.scrap) / y.scrap * 100).toFixed(2)
+
+ }
+
+}
+
+
+// 뉴스 간단 정리
 const simpleNews = newsData.articles.map(n => ({
 title:n.title,
 description:n.description
 }))
 
+
+// 중요 뉴스 필터
 const filterAI = await fetch(
 "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=YOUR_GEMINI_KEY",
 {
@@ -79,7 +113,7 @@ contents:[{
 parts:[{
 text:`
 
-다음 뉴스 중 글로벌 금속/원자재 시장에 가장 중요한 뉴스 3개를 선택하라.
+다음 뉴스 중 글로벌 금속 시장에 가장 중요한 뉴스 3개 선택
 
 뉴스:
 ${JSON.stringify(simpleNews)}
@@ -104,7 +138,7 @@ filterResult?.candidates?.[0]?.content?.parts?.[0]?.text || ""
 
 
 
-// 5️⃣ 시장 브리핑 생성
+// 시장 브리핑 생성
 const briefingAI = await fetch(
 "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=YOUR_GEMINI_KEY",
 {
@@ -116,24 +150,29 @@ contents:[{
 parts:[{
 text:`
 
-다음 데이터로 글로벌 원자재 시장 브리핑 작성
+다음 데이터를 분석하여 글로벌 금속 시장 브리핑 작성
 
 가격 데이터
-LME Aluminum: ${aluminum}
-Copper: ${copper}
-Iron Ore: ${ironOre}
-Steel Scrap: ${scrap}
 
-중요 뉴스:
+Aluminum: ${aluminum} (${change.aluminum || 0}%)
+Copper: ${copper} (${change.copper || 0}%)
+Iron Ore: ${ironOre} (${change.ironOre || 0}%)
+Steel Scrap: ${scrap} (${change.scrap || 0}%)
+
+뉴스:
 ${importantNews}
 
 조건
 
 1. 오늘 글로벌 금속시장 핵심 요약 (5줄)
-2. 알루미늄 시장 영향
-3. 철스크랩 시장 영향
-4. 철광석 시장 방향
-5. 제강사 원료구매팀 관점 내일 시장 전망
+
+2. 가격 상승 또는 하락 이유 설명
+
+3. 알루미늄 시장 전망
+
+4. 철스크랩 시장 전망
+
+5. 제강사 원료 구매팀 관점 내일 시장 방향
 
 `
 }]
@@ -150,7 +189,7 @@ briefingResult?.candidates?.[0]?.content?.parts?.[0]?.text || ""
 
 
 
-// 6️⃣ Firebase 저장
+// Firebase 저장
 await setDoc(doc(db,"daily_news",today),{
 
 date: today,
@@ -158,10 +197,17 @@ date: today,
 daily_briefing: briefing,
 
 prices:{
- aluminum: aluminum,
- copper: copper,
- ironOre: ironOre,
- scrap: scrap
+ aluminum,
+ copper,
+ ironOre,
+ scrap
+},
+
+change:{
+ aluminum: change.aluminum || 0,
+ copper: change.copper || 0,
+ ironOre: change.ironOre || 0,
+ scrap: change.scrap || 0
 },
 
 news: newsData.articles.map(n => ({
